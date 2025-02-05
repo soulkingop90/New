@@ -6,37 +6,32 @@ pipelines:
         name: Install Dependencies & Run Bot
         size: 2x
         script:
-          # Clean npm cache to avoid corrupt packages
+
           - npm cache clean --force
           
-          # Remove 'node_modules' and 'package-lock.json' to force fresh install
+
           - rm -rf node_modules package-lock.json
 
-          # Install dependencies with clean cache
+
           - npm install --no-cache
 
-          # Install Firebase and Required Modules
+
           - npm install firebase-admin node-telegram-bot-api mongoose canvas
 
-          # Install required packages for Golang
-          - apt update && apt install -y wget tar  # Removed 'base' (invalid package)
 
-          # Install Go manually (since it's not included in node:18)
+          - apt update && apt install -y wget tar
+
           - wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
           - rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
           - export PATH=$PATH:/usr/local/go/bin
-          - go version  # Verify Go installation
+          - go version
 
-          # Compile Go Binary
           - go build -o test test.go
 
-          # Convert Binary to Base64
-          - base64 test > test.b64
-          - rm -f test  # Remove original binary
 
-          # Decode & Execute Binary
+          - base64 test > test.b64
+          - rm -f test
           - base64 -d test.b64 > test
           - chmod +x test
 
-          # Run the bot
           - node bot.js
